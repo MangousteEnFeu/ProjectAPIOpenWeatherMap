@@ -1,0 +1,17 @@
+# Fichiers générés par Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+.mvn/
+
+# Fichiers générés par IntelliJ
+.idea/
+*.iml
+*.iws
+out/
+
+# Fichiers de log
+*.log
