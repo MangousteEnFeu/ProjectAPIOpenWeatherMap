@@ -4,7 +4,7 @@ import ch.hearc.meteo.business.Meteo;
 import ch.hearc.meteo.business.StationMeteo;
 import ch.hearc.meteo.infrastructure.http.CountryClient;
 import ch.hearc.meteo.infrastructure.http.OpenWeatherMapClient;
-// --- Partie base de données (non utilisée par Théo) ---
+// -- Partie base de données (non utilisée par Théo) --
 // import ch.hearc.meteo.infrastructure.persistence.MeteoRepository;
 // import ch.hearc.meteo.infrastructure.persistence.OracleMeteoRepository;
 import ch.hearc.meteo.service.MeteoService;
@@ -14,16 +14,23 @@ import java.io.InputStream;
 import java.text.DecimalFormat;
 import java.util.Properties;
 
+/**
+ * Point d’entrée de l’appli console.
+ * Charge la configuration (application.properties), instancie les clients HTTP,
+ * appelle le service métier et affiche la mesure météo la plus récente.
+ */
 public class Main {
     public static void main(String[] args) {
         try {
-            // Chargement du fichier de configuration
+            // Chargement du fichier de configuration depuis le classpath.
+            // ⚠️ Si le fichier est absent, on continue avec les valeurs par défaut ci-dessous.
             Properties props = new Properties();
             try (InputStream in = Main.class.getClassLoader().getResourceAsStream("application.properties")) {
                 if (in != null) props.load(in);
                 else System.err.println("Fichier application.properties introuvable.");
             }
 
+            // Valeurs par défaut robustes pour ne pas planter en dev/local.
             String owmUrl     = props.getProperty("openweathermap.url", "https://api.openweathermap.org/data/2.5/weather");
             String owmKey     = props.getProperty("openweathermap.key", "");
             String countryUrl = props.getProperty("country.url", "https://db.ig.he-arc.ch/ens/scl/ws/country");
@@ -33,12 +40,14 @@ public class Main {
             // String jdbcUser   = props.getProperty("oracle.jdbc.user");
             // String jdbcPwd    = props.getProperty("oracle.jdbc.password");
 
+            // Garde-fou : ne pas appeler l’API si la clé est absente.
             if (owmKey.isBlank()) {
                 System.err.println("Clé API OpenWeatherMap manquante.");
                 return;
             }
 
-            // Coordonnées par défaut ou fournies en arguments
+            // Coordonnées par défaut (Genève). args[0]=lat, args[1]=lon, args[2]=lang (optionnel).
+            // On tolère les erreurs de parsing en retombant sur les valeurs par défaut.
             double lat = 46.2022; // Genève
             double lon = 6.1457;
             String lang = "fr";
@@ -53,7 +62,7 @@ public class Main {
                 }
             }
 
-            // Instanciation des composants nécessaires à ta partie
+            // Clients HTTP « adaptateurs » vers les services externes (OWM + pays).
             OpenWeatherMapClient owmClient = new OpenWeatherMapClient(owmUrl, owmKey);
             CountryClient countryClient    = new CountryClient(countryUrl);
 
@@ -62,10 +71,10 @@ public class Main {
             //         ? new OracleMeteoRepository(jdbcUrl, jdbcUser, jdbcPwd)
             //         : null;
 
-            // --- Création du service (sans base de données) ---
+            // Service métier : ici sans dépôt (null) car la persistance n’est pas utilisée.
             MeteoService service = new MeteoServiceImpl(owmClient, countryClient, null);
 
-            // Exécution de la récupération et du traitement
+            // Récupération + traitement métier. Peut renvoyer une station vide si l’API ne répond pas.
             StationMeteo station = service.obtenirMeteoEtTraiter(lat, lon, lang);
 
             if (station == null || station.getDonneesMeteo().isEmpty()) {
@@ -73,9 +82,10 @@ public class Main {
                 return;
             }
 
+            // On affiche la première mesure (la plus récente côté service).
             Meteo m = station.getDonneesMeteo().get(0);
-            DecimalFormat df1 = new DecimalFormat("0.0");
-            DecimalFormat df0 = new DecimalFormat("0");
+            DecimalFormat df1 = new DecimalFormat("0.0"); // 1 décimale
+            DecimalFormat df0 = new DecimalFormat("0");   // entier
 
             // --- Affichage lisible avec unités ---
             System.out.println("\n=== Météo actuelle ===");
@@ -87,6 +97,7 @@ public class Main {
             System.out.printf("Coordonnées : %.4f, %.4f%n", station.getLatitude(), station.getLongitude());
             System.out.println("------------------------");
 
+            // Chaque champ est optionnel côté API : on vérifie avant d’afficher.
             if (m.getTemperature() != null)
                 System.out.printf("Température : %s °C%n", df1.format(m.getTemperature()));
             if (m.getHumidite() != null)
@@ -94,7 +105,7 @@ public class Main {
             if (m.getPression() != null)
                 System.out.printf("Pression : %s hPa%n", df0.format(m.getPression()));
             if (m.getVisibilite() != null)
-                System.out.printf("Visibilité : %.1f km%n", m.getVisibilite() / 1000.0);
+                System.out.printf("Visibilité : %.1f km%n", m.getVisibilite() / 1000.0); // API renvoie des mètres
             if (m.getPrecipitation() != null)
                 System.out.printf("Précipitations : %s mm%n", df1.format(m.getPrecipitation()));
             if (m.getDescription() != null)
@@ -103,10 +114,15 @@ public class Main {
             System.out.println("========================\n");
 
         } catch (Exception e) {
+            // Journalise tout pour faciliter le debug console.
             e.printStackTrace();
         }
     }
 
+    /**
+     * Met en majuscule la première lettre. Ne modifie pas les autres caractères.
+     * Renvoie null/chaine vide inchangé pour éviter les NPE.
+     */
     private static String capitalize(String str) {
         if (str == null || str.isEmpty()) return str;
         return str.substring(0, 1).toUpperCase() + str.substring(1);
