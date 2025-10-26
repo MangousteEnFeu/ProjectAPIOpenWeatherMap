@@ -15,3 +15,6 @@ out/
 
 # Fichiers de log
 *.log
+
+# Fichier de config sensible (clés API, mots de passe DB)
+src/main/resources/application.properties

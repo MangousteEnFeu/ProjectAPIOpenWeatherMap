@@ -25,6 +25,7 @@ CREATE TABLE stations_meteo (
                                 nom VARCHAR2(255) NOT NULL,
                                 latitude NUMBER NOT NULL,
                                 longitude NUMBER NOT NULL,
+                                openweather_id NUMBER,
                                 CONSTRAINT pk_stations_meteo PRIMARY KEY(station_id),
                                 CONSTRAINT fk_stations_meteo_pays FOREIGN KEY(pays_id) REFERENCES pays(pays_id)
 );
@@ -38,10 +39,9 @@ CREATE TABLE meteo (
                        temperature NUMBER,
                        humidite NUMBER,
                        pression NUMBER,
-                       vitesse_vent NUMBER,
-                       direction_vent NUMBER,
+                       visibilite NUMBER,        -- <- ajouté (mètres de visibilité)
+                       precipitation NUMBER,     -- <- ajouté (mm pluie 1h)
                        description VARCHAR2(255),
-                       icone VARCHAR2(50),
                        CONSTRAINT pk_meteo PRIMARY KEY(meteo_id),
                        CONSTRAINT fk_meteo_station FOREIGN KEY(station_id) REFERENCES stations_meteo(station_id)
 );
