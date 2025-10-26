@@ -13,6 +13,7 @@ import com.google.gson.GsonBuilder;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 public class MeteoServiceImpl implements MeteoService {
 
@@ -37,38 +38,48 @@ public class MeteoServiceImpl implements MeteoService {
 
     @Override
     public StationMeteo obtenirMeteoEtTraiter(double latitude, double longitude, String langCountry) {
-        // 1. Météo brute
+        // 1. Appel API OpenWeather
         StationMeteo station = owmClient.fetchMeteo(null, null, latitude, longitude, langCountry);
 
-        // 2. Enrichir pays (nom complet "Suisse")
-        if (station != null && station.getPays() != null && station.getPays().getCode() != null && countryClient != null) {
+        // 2. Enrichir le pays (nom lisible, ex: "Suisse")
+        if (station != null
+                && station.getPays() != null
+                && station.getPays().getCode() != null
+                && countryClient != null) {
+
             String code = station.getPays().getCode().trim();
             if (!code.isEmpty()) {
                 try {
-                    Pays p = countryClient.fetchPaysByAlpha2(code.toLowerCase(), (langCountry != null ? langCountry : "fr"));
+                    Pays p = countryClient.fetchPaysByAlpha2(
+                            code.toLowerCase(),
+                            (langCountry != null ? langCountry : "fr")
+                    );
                     if (p != null && p.getNom() != null && !p.getNom().isBlank()) {
                         station.setPays(p);
                     } else {
-                        // fallback local
-                        String nomLocal = new java.util.Locale("", code.toUpperCase())
-                                .getDisplayCountry(langCountry != null ? new java.util.Locale(langCountry) : java.util.Locale.FRENCH);
-                        if (nomLocal != null && !nomLocal.isBlank()) station.getPays().setNom(nomLocal);
+                        // fallback via Locale Java si l'API pays ne renvoie pas de nom
+                        String nomLocal = new Locale("", code.toUpperCase())
+                                .getDisplayCountry(langCountry != null ? new Locale(langCountry) : Locale.FRENCH);
+                        if (nomLocal != null && !nomLocal.isBlank()) {
+                            station.getPays().setNom(nomLocal);
+                        }
                     }
                 } catch (ApiClientException e) {
-                    // fallback local
-                    String nomLocal = new java.util.Locale("", code.toUpperCase())
-                            .getDisplayCountry(langCountry != null ? new java.util.Locale(langCountry) : java.util.Locale.FRENCH);
-                    if (nomLocal != null && !nomLocal.isBlank()) station.getPays().setNom(nomLocal);
+                    // fallback si l'API pays plante
+                    String nomLocal = new Locale("", code.toUpperCase())
+                            .getDisplayCountry(langCountry != null ? new Locale(langCountry) : Locale.FRENCH);
+                    if (nomLocal != null && !nomLocal.isBlank()) {
+                        station.getPays().setNom(nomLocal);
+                    }
                 }
             }
         }
 
-        // 3. Persistance éventuelle
+        // 3. Sauvegarde en DB (si repo dispo)
         if (meteoRepository != null) {
             try {
                 meteoRepository.save(station);
             } catch (Exception ex) {
-                // on laisse passer l'erreur de DB, mais on ne plante pas l'affichage
                 System.err.println("[WARN] Sauvegarde DB échouée: " + ex.getMessage());
             }
         }
@@ -116,6 +127,39 @@ public class MeteoServiceImpl implements MeteoService {
             return meteoRepository.findMeteoForStationAtDate(stationName, date);
         } catch (Exception e) {
             System.err.println("[WARN] Lecture relevé DB échouée: " + e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
+    public StationMeteo capturerMeteoPourStationEnregistree(String stationName, String langCountry) {
+        if (meteoRepository == null) {
+            System.err.println("[WARN] Pas de base de données configurée, impossible d'utiliser une station enregistrée.");
+            return null;
+        }
+        try {
+            // 1. On va chercher les coordonnées existantes de la station
+            StationMeteo existante = meteoRepository.findStationByName(stationName);
+            if (existante == null) {
+                System.err.println("[WARN] Station inconnue : " + stationName);
+                return null;
+            }
+
+            Double lat = existante.getLatitude();
+            Double lon = existante.getLongitude();
+            if (lat == null || lon == null) {
+                System.err.println("[WARN] La station " + stationName + " n'a pas de coordonnées en base.");
+                return null;
+            }
+
+            // 2. On réutilise la même logique que obtenirMeteoEtTraiter :
+            //    - appel API météo actuelle avec ces coordonnées
+            //    - enrichissement pays
+            //    - insertion du relevé en base
+            return obtenirMeteoEtTraiter(lat, lon, langCountry);
+
+        } catch (Exception e) {
+            System.err.println("[WARN] Impossible de récupérer la station '" + stationName + "': " + e.getMessage());
             return null;
         }
     }

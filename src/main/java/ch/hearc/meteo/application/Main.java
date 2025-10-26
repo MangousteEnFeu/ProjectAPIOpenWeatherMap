@@ -10,10 +10,10 @@ import ch.hearc.meteo.service.MeteoService;
 import ch.hearc.meteo.service.MeteoServiceImpl;
 
 import java.io.InputStream;
-import java.text.DecimalFormat;
-import java.text.SimpleDateFormat;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.text.DecimalFormat;
+import java.text.SimpleDateFormat;
 import java.util.*;
 
 public class Main {
@@ -22,7 +22,7 @@ public class Main {
 
     public static void main(String[] args) {
 
-        // 1. Charger la configuration
+        // 1. Charger la config
         Properties props = new Properties();
         try (InputStream in = Main.class.getClassLoader().getResourceAsStream("application.properties")) {
             if (in != null) props.load(in);
@@ -44,11 +44,11 @@ public class Main {
             return;
         }
 
-        // 2. Instancier clients API
+        // 2. Clients API
         OpenWeatherMapClient owmClient = new OpenWeatherMapClient(owmUrl, owmKey);
         CountryClient countryClient    = new CountryClient(countryUrl);
 
-// 3. Instancier le repository Oracle SI les infos JDBC sont présentes et valides
+        // 3. Repo Oracle si dispo et connexion OK
         MeteoRepository repo = null;
         if (isNotBlank(jdbcUrl) && isNotBlank(jdbcUser)) {
             if (testConnexionOracle(jdbcUrl, jdbcUser, jdbcPwd)) {
@@ -61,12 +61,16 @@ public class Main {
             System.out.println("(Info) Paramètres Oracle absents. Mode sans sauvegarde.");
         }
 
-        // 4. Créer le service
+        // 4. Service
         MeteoService service = new MeteoServiceImpl(owmClient, countryClient, repo);
 
-        // 5. Boucler sur le menu principal
+        // 5. Boucle menu principal
         boucleMenuPrincipal(service);
     }
+
+    // ---------------------------------------------------------
+    // MENU PRINCIPAL
+    // ---------------------------------------------------------
 
     private static void boucleMenuPrincipal(MeteoService service) {
         boolean quitter = false;
@@ -74,7 +78,7 @@ public class Main {
             System.out.println();
             System.out.println("=== MENU PRINCIPAL ===");
             System.out.println("1. Météo HE-Arc Neuchâtel (afficher seulement)");
-            System.out.println("2. Nouvelle station (saisir coordonnées et enregistrer)");
+            System.out.println("2. Météo actuelle (saisie du lieu puis enregistrement)");
             System.out.println("3. Consulter historique enregistré");
             System.out.println("9. Quitter");
             System.out.print("Votre choix : ");
@@ -83,11 +87,11 @@ public class Main {
 
             switch (choix) {
                 case "1":
-                    // coordonnées école HE-Arc Neuchâtel (à ajuster si besoin)
-                    afficherMeteoCourante(service, 46.9931, 6.9319, "fr", false);
+                    // coordonnées HE-Arc Neuchâtel (à ajuster)
+                    afficherMeteoCourante(service, 46.9931, 6.9319, "fr");
                     break;
                 case "2":
-                    actionSaisirEtEnregistrer(service);
+                    sousMenuAcquisitionMeteo(service);
                     break;
                 case "3":
                     sousMenuHistorique(service);
@@ -103,12 +107,95 @@ public class Main {
         }
     }
 
+    // ---------------------------------------------------------
+    // SOUS-MENU OPTION 2
+    // ---------------------------------------------------------
+
     /**
-     * Option 2 :
-     * - On demande les coordonnées à l'utilisateur
-     * - On appelle le service
-     * - Le service va sauvegarder en base (si repo Oracle actif)
-     * - On affiche le résultat
+     * Sous-menu "Météo actuelle (saisie du lieu puis enregistrement)"
+     *
+     * 1. Station météo déjà enregistrée
+     *    -> on récupère ses coordonnées en base
+     *    -> on interroge l'API météo actuelle
+     *    -> on affiche
+     *    -> on sauvegarde en base le nouveau relevé
+     *
+     * 2. Nouvelle station (lat/lon)
+     *    -> on demande les coordonnées
+     *    -> on interroge l'API météo actuelle
+     *    -> on affiche
+     *    -> on sauvegarde
+     */
+    private static void sousMenuAcquisitionMeteo(MeteoService service) {
+        while (true) {
+            System.out.println();
+            System.out.println("=== Météo actuelle / Enregistrement ===");
+            System.out.println("1. Depuis une station météo déjà enregistrée");
+            System.out.println("2. Nouvelle station (saisir latitude / longitude)");
+            System.out.println("8. Retour");
+            System.out.print("Votre choix : ");
+
+            String choix = SCANNER.nextLine().trim();
+
+            if ("8".equals(choix)) {
+                return; // retour menu principal
+            }
+
+            switch (choix) {
+                case "1":
+                    // Lister les stations déjà enregistrées
+                    List<String> stations = service.listerStationsEnregistrees();
+                    if (stations.isEmpty()) {
+                        System.out.println("(Aucune station enregistrée ou base non configurée)");
+                        break;
+                    }
+
+                    System.out.println("Stations disponibles :");
+                    for (String s : stations) {
+                        System.out.println("- " + s);
+                    }
+
+                    System.out.print("Entrez le nom EXACT de la station (ou 8 pour retour) : ");
+                    String stationChoisie = SCANNER.nextLine().trim();
+                    if ("8".equals(stationChoisie)) {
+                        break;
+                    }
+
+                    if (!stations.contains(stationChoisie)) {
+                        System.out.println("Station inconnue.");
+                        break;
+                    }
+
+                    // Va chercher ses coordonnées en base, puis récupère la météo actuelle
+                    StationMeteo stationMaj = service.capturerMeteoPourStationEnregistree(stationChoisie, "fr");
+
+                    if (stationMaj == null
+                            || stationMaj.getDonneesMeteo() == null
+                            || stationMaj.getDonneesMeteo().isEmpty()) {
+                        System.out.println("Impossible de récupérer la météo actuelle pour cette station.");
+                    } else {
+                        afficherStation(stationMaj);
+                        System.out.println("(Les données ont été sauvegardées si la base est configurée)");
+                    }
+                    break;
+
+                case "2":
+                    // Saisie manuelle nouvelle station
+                    actionSaisirEtEnregistrer(service);
+                    break;
+
+                default:
+                    System.out.println("Choix invalide.");
+            }
+        }
+    }
+
+    /**
+     * Saisie libre d'une nouvelle station :
+     * - l'utilisateur donne lat / lon / langue
+     * - on appelle l'API météo
+     * - on affiche
+     * - on sauvegarde en base
      */
     private static void actionSaisirEtEnregistrer(MeteoService service) {
         System.out.println();
@@ -127,22 +214,19 @@ public class Main {
             return;
         }
 
-        // Affichage
         afficherStation(station);
         System.out.println("(Les données ont été sauvegardées si la base est configurée)");
     }
 
     /**
-     * Option 1 (ou utilitaire générique) :
-     * Récupère la météo mais ne dit rien sur la sauvegarde.
-     *
-     * @param persistInfo si false, on n'affiche pas le message "sauvegardé ..."
+     * Météo actuelle pour coord fixes (HE-Arc Neuchâtel).
+     * En interne, ça passe aussi par obtenirMeteoEtTraiter,
+     * donc ça peut aussi enregistrer en DB si elle est connectée.
      */
     private static void afficherMeteoCourante(MeteoService service,
                                               double lat,
                                               double lon,
-                                              String lang,
-                                              boolean persistInfo) {
+                                              String lang) {
 
         StationMeteo station = service.obtenirMeteoEtTraiter(lat, lon, lang);
 
@@ -152,32 +236,30 @@ public class Main {
         }
 
         afficherStation(station);
-
-        if (persistInfo) {
-            System.out.println("(Les données ont été sauvegardées si la base est configurée)");
-        }
     }
 
+    // ---------------------------------------------------------
+    // SOUS-MENU OPTION 3 : HISTORIQUE
+    // ---------------------------------------------------------
+
     /**
-     * Option 3 :
-     * - affiche la liste des stations déjà enregistrées (ordre alphabétique)
-     * - l'utilisateur en choisit une
-     * - on affiche la liste des dates de mesures
-     * - l'utilisateur en choisit une
-     * - on affiche le relevé détaillé
+     * Historique :
+     * 1. Choisir une station
+     * 2. Choisir une date parmi les mesures enregistrées
+     * 3. Afficher le relevé détaillé
      */
     private static void sousMenuHistorique(MeteoService service) {
         while (true) {
             System.out.println();
             System.out.println("=== Historique des mesures ===");
             System.out.println("8. Retour");
+
             List<String> stations = service.listerStationsEnregistrees();
             if (stations.isEmpty()) {
                 System.out.println("(Aucune station enregistrée en base ou base non configurée)");
                 return;
             }
 
-            // Afficher les stations
             for (String s : stations) {
                 System.out.println("- " + s);
             }
@@ -185,49 +267,56 @@ public class Main {
             System.out.print("Entrez un nom de station (ou 8 pour retour) : ");
             String choixStation = SCANNER.nextLine().trim();
             if ("8".equals(choixStation)) {
-                return; // retour menu principal
+                return;
             }
             if (!stations.contains(choixStation)) {
                 System.out.println("Station inconnue.");
-                continue; // redemande
+                continue;
             }
 
-            // on a une station valide -> afficher dates
             List<Date> dates = service.listerDatesPourStation(choixStation);
             if (dates.isEmpty()) {
                 System.out.println("(Aucune mesure historique trouvée pour cette station)");
                 continue;
             }
 
+            // Format d'affichage ET de saisie :
             SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+
             System.out.println("Mesures disponibles pour " + choixStation + " :");
             for (Date d : dates) {
                 System.out.println("- " + sdf.format(d));
             }
-            System.out.print("Entrez une date exacte (format: yyyy-MM-dd HH:mm:ss) (copier-coller ci-dessus) ou 8 pour retour : ");
+
+            System.out.print(
+                    "Entrez une date EXACTE parmi la liste (format: yyyy-MM-dd HH:mm:ss) " +
+                            "ou 8 pour retour : "
+            );
             String choixDate = SCANNER.nextLine().trim();
             if ("8".equals(choixDate)) {
-                continue; // revient au choix de station
-            }
-
-            Date dateChoisie = null;
-            try {
-                dateChoisie = sdf.parse(choixDate);
-            } catch (Exception e) {
-                System.out.println("Format de date invalide.");
                 continue;
             }
 
-            Meteo relevé = service.obtenirMeteoHistorique(choixStation, dateChoisie);
-            if (relevé == null) {
+            Date dateChoisie;
+            try {
+                dateChoisie = sdf.parse(choixDate);
+            } catch (Exception e) {
+                System.out.println("Format de date invalide. Exemple attendu : 2025-10-26 17:30:26");
+                continue;
+            }
+
+            Meteo releve = service.obtenirMeteoHistorique(choixStation, dateChoisie);
+            if (releve == null) {
                 System.out.println("Aucune donnée météo pour cette date précise.");
             } else {
-                afficherMesureDetaillee(relevé);
+                afficherMesureDetaillee(releve);
             }
         }
     }
 
-    /* ====== petites fonctions utilitaires d'affichage ===== */
+    // ---------------------------------------------------------
+    // AFFICHAGE / UTILITAIRES
+    // ---------------------------------------------------------
 
     private static void afficherStation(StationMeteo station) {
         Meteo m = station.getDonneesMeteo().get(0);
@@ -243,7 +332,10 @@ public class Main {
                         ? station.getPays().getNom()
                         : (station.getPays() != null ? station.getPays().getCode() : "--")
         );
-        System.out.printf("Coordonnées : %.4f, %.4f%n", station.getLatitude(), station.getLongitude());
+        System.out.printf("Coordonnées : %.4f, %.4f%n",
+                station.getLatitude() != null ? station.getLatitude() : 0.0,
+                station.getLongitude() != null ? station.getLongitude() : 0.0
+        );
         System.out.println("------------------------");
 
         if (m.getTemperature() != null)
@@ -303,11 +395,6 @@ public class Main {
         return s != null && !s.isBlank();
     }
 
-    private static String capitalize(String str) {
-        if (str == null || str.isEmpty()) return str;
-        return str.substring(0, 1).toUpperCase() + str.substring(1);
-    }
-
     private static boolean testConnexionOracle(String url, String user, String pwd) {
         try (Connection cn = DriverManager.getConnection(url, user, pwd)) {
             return true;
@@ -315,5 +402,10 @@ public class Main {
             System.err.println("[WARN] Échec connexion Oracle : " + e.getMessage());
             return false;
         }
+    }
+
+    private static String capitalize(String str) {
+        if (str == null || str.isEmpty()) return str;
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
 }

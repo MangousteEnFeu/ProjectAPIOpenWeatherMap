@@ -5,43 +5,42 @@ import ch.hearc.meteo.business.StationMeteo;
 
 import java.util.Date;
 import java.util.List;
+
 /**
- * Interface d'accès aux données persistées (Oracle).
- *
- * Steven implémente tout ça dans OracleMeteoRepository.
+ * Accès à la base Oracle (lecture/écriture).
+ * Implémenté par OracleMeteoRepository.
  */
 public interface MeteoRepository {
 
     /**
      * Sauvegarde en base :
-     * - pays (si pas déjà présent)
-     * - station (si pas déjà présente)
-     * - mesure météo associée
+     * - le pays (si pas déjà présent)
+     * - la station (si pas déjà présente)
+     * - le relevé météo associé
      */
     void save(StationMeteo station) throws Exception;
 
     /**
-     * Retourne les noms des stations météo existantes
-     * triées par ordre alphabétique.
-     *
-     * Exemple: ["Genève", "HE-Arc Neuchâtel", "Paris"]
+     * Retourne les noms des stations météo connues (ordre alphabétique).
      */
     List<String> findAllStationNames() throws Exception;
 
     /**
-     * Retourne la liste des dates de relevé météo
-     * pour une station donnée (par son nom exact).
-     *
-     * Ex: [2025-10-26 21:05:00, 2025-10-27 08:12:00, ...]
+     * Liste les timestamps de relevés météo pour une station, triés
+     * (le plus récent en premier).
      */
     List<Date> findMeasurementDatesForStation(String stationName) throws Exception;
 
     /**
-     * Retourne le relevé météo complet (température, pression,
-     * humidité, etc.) pour une station et une date donnée.
-     *
-     * Si plusieurs relevés ont la même timestamp en base,
-     * on renvoie le plus proche / premier.
+     * Retourne un relevé météo précis (température, etc.)
+     * pour une station à une date donnée (par seconde).
      */
     Meteo findMeteoForStationAtDate(String stationName, Date date) throws Exception;
+
+    /**
+     * Retourne une station existante par son nom :
+     * au moins nom / latitude / longitude / pays / openweather_id.
+     * Sert pour re-capturer la météo actuelle à cet endroit.
+     */
+    StationMeteo findStationByName(String stationName) throws Exception;
 }

@@ -10,17 +10,7 @@ import java.util.Date;
 import java.util.List;
 
 /**
- * Implémentation Oracle du repository météo.
- * Gère :
- *  - insertion Pays / Station / Météo
- *  - lecture des stations / historique
- *
- * Tables attendues (avec triggers pour PK auto) :
- *
- *  PAYS(pays_id PK, nom, code_pays UNIQUE)
- *  STATIONS_METEO(station_id PK, pays_id FK, nom, latitude, longitude, openweather_id)
- *  METEO(meteo_id PK, station_id FK, date_releve, temperature, humidite, pression,
- *        visibilite, precipitation, vitesse_vent, direction_vent, description, icone)
+ * Repository Oracle : insert + lecture historique.
  */
 public class OracleMeteoRepository implements MeteoRepository {
 
@@ -34,13 +24,13 @@ public class OracleMeteoRepository implements MeteoRepository {
         this.jdbcPassword = jdbcPassword;
     }
 
-    // --- Connexion Oracle ---
     private Connection getConnection() throws SQLException {
-        // Assure-toi que ojdbc est bien dans les dépendances du projet
         return DriverManager.getConnection(jdbcUrl, jdbcUser, jdbcPassword);
     }
 
-    // --- Méthode principale : sauvegarde d'une station + ses mesures météo ---
+    // -------------------------------------------------------
+    // PERSISTENCE (save)
+    // -------------------------------------------------------
 
     @Override
     public void save(StationMeteo station) throws Exception {
@@ -50,16 +40,16 @@ public class OracleMeteoRepository implements MeteoRepository {
         try (Connection cn = getConnection()) {
             cn.setAutoCommit(false);
 
-            // 1. pays -> obtenir/insérer, récupérer pays_id
+            // 1. pays -> id
             Integer paysId = null;
             if (station.getPays() != null) {
                 paysId = ensurePays(cn, station.getPays());
             }
 
-            // 2. station -> obtenir/insérer, récupérer station_id
+            // 2. station -> id
             Integer stationId = ensureStation(cn, station, paysId);
 
-            // 3. relevés météo -> INSERT dans meteo
+            // 3. données météo -> insert
             for (Meteo m : station.getDonneesMeteo()) {
                 insertMeteoRow(cn, stationId, m);
             }
@@ -68,13 +58,7 @@ public class OracleMeteoRepository implements MeteoRepository {
         }
     }
 
-    /**
-     * Vérifie si le pays existe déjà en base (par son code_pays).
-     * Sinon, insère.
-     * Retourne toujours le pays_id.
-     */
     private Integer ensurePays(Connection cn, Pays pays) throws SQLException {
-        // 1) chercher pays existant
         String selectSql =
                 "SELECT pays_id " +
                         "FROM pays " +
@@ -89,8 +73,6 @@ public class OracleMeteoRepository implements MeteoRepository {
             }
         }
 
-        // 2) insérer si pas trouvé
-        // grâce au trigger, pays_id est généré automatiquement
         String insertSql =
                 "INSERT INTO pays (nom, code_pays) " +
                         "VALUES (?, ?)";
@@ -101,7 +83,6 @@ public class OracleMeteoRepository implements MeteoRepository {
             ps.executeUpdate();
         }
 
-        // 3) relire l'id
         try (PreparedStatement ps = cn.prepareStatement(selectSql)) {
             ps.setString(1, pays.getCode());
             try (ResultSet rs = ps.executeQuery()) {
@@ -114,15 +95,6 @@ public class OracleMeteoRepository implements MeteoRepository {
         return null;
     }
 
-    /**
-     * Vérifie si la station existe déjà :
-     * critère = même nom + latitude + longitude (pour éviter de dupliquer 36 fois la même).
-     * Si pas trouvée => INSERT.
-     * Retourne station_id.
-     *
-     * NOTE : Si vous voulez utiliser openweather_id comme clé d'unicité,
-     * vous pouvez adapter ici.
-     */
     private Integer ensureStation(Connection cn, StationMeteo station, Integer paysId) throws SQLException {
 
         String selectSql =
@@ -144,7 +116,6 @@ public class OracleMeteoRepository implements MeteoRepository {
             }
         }
 
-        // pas trouvé -> INSERT
         String insertSql =
                 "INSERT INTO stations_meteo " +
                         "(pays_id, nom, latitude, longitude, openweather_id) " +
@@ -170,7 +141,6 @@ public class OracleMeteoRepository implements MeteoRepository {
             ps.executeUpdate();
         }
 
-        // relire l'id après insert
         try (PreparedStatement ps = cn.prepareStatement(selectSql)) {
             ps.setString(1, station.getNom());
             ps.setDouble(2, station.getLatitude() != null ? station.getLatitude() : 0.0);
@@ -186,10 +156,6 @@ public class OracleMeteoRepository implements MeteoRepository {
         return null;
     }
 
-    /**
-     * Insère UNE mesure météo dans la table METEO pour une station donnée.
-     * Le trigger gère meteo_id.
-     */
     private void insertMeteoRow(Connection cn, Integer stationId, Meteo m) throws SQLException {
 
         String insertSql =
@@ -215,7 +181,7 @@ public class OracleMeteoRepository implements MeteoRepository {
                 ps.setNull(1, Types.INTEGER);
             }
 
-            // date_releve
+            // date_releve = dateMesure ou NOW
             if (m.getDateMesure() != null) {
                 ps.setTimestamp(2, new Timestamp(m.getDateMesure().getTime()));
             } else {
@@ -268,12 +234,10 @@ public class OracleMeteoRepository implements MeteoRepository {
         }
     }
 
+    // -------------------------------------------------------
+    // LECTURE : liste stations, dates, relevés, coordonnées
+    // -------------------------------------------------------
 
-    // --- Lecture pour le menu historique ---
-
-    /**
-     * Retourne la liste des noms de stations en base, triés alphabétiquement.
-     */
     @Override
     public List<String> findAllStationNames() throws Exception {
         List<String> result = new ArrayList<>();
@@ -295,10 +259,6 @@ public class OracleMeteoRepository implements MeteoRepository {
         return result;
     }
 
-    /**
-     * Retourne toutes les dates de relevé météo pour une station donnée (par nom).
-     * Triées chronologiquement.
-     */
     @Override
     public List<Date> findMeasurementDatesForStation(String stationName) throws Exception {
         List<Date> result = new ArrayList<>();
@@ -308,7 +268,7 @@ public class OracleMeteoRepository implements MeteoRepository {
                         "FROM meteo m " +
                         "JOIN stations_meteo s ON s.station_id = m.station_id " +
                         "WHERE s.nom = ? " +
-                        "ORDER BY m.date_releve ASC";
+                        "ORDER BY m.date_releve DESC"; // plus récent d'abord
 
         try (Connection cn = getConnection();
              PreparedStatement ps = cn.prepareStatement(sql)) {
@@ -328,14 +288,10 @@ public class OracleMeteoRepository implements MeteoRepository {
         return result;
     }
 
-    /**
-     * Retourne un relevé météo complet pour une station donnée à une date précise.
-     * On matche sur l'égalité exacte station.nom + date_releve.
-     */
     @Override
     public Meteo findMeteoForStationAtDate(String stationName, Date date) throws Exception {
 
-        // On va chercher la mesure dont le timestamp est dans la même seconde.
+        // On matche la seconde entière, car Oracle TIMESTAMP stocke souvent les millisecondes
         String sql =
                 "SELECT m.date_releve, " +
                         "       m.temperature, " +
@@ -349,9 +305,8 @@ public class OracleMeteoRepository implements MeteoRepository {
                         "WHERE s.nom = ? " +
                         "  AND m.date_releve >= ? " +
                         "  AND m.date_releve < ? " +
-                        "ORDER BY m.date_releve DESC";
+                        "ORDER BY m.date_releve ASC";
 
-        // On définit la fenêtre [date, date+1sec)
         Timestamp startTs = new Timestamp(date.getTime());
         Timestamp endTs   = new Timestamp(date.getTime() + 1000); // +1 seconde
 
@@ -409,5 +364,51 @@ public class OracleMeteoRepository implements MeteoRepository {
         return null;
     }
 
+    @Override
+    public StationMeteo findStationByName(String stationName) throws Exception {
+        String sql =
+                "SELECT s.nom, s.latitude, s.longitude, s.openweather_id, " +
+                        "       p.nom AS pays_nom, p.code_pays AS pays_code " +
+                        "FROM stations_meteo s " +
+                        "LEFT JOIN pays p ON p.pays_id = s.pays_id " +
+                        "WHERE s.nom = ?";
 
+        try (Connection cn = getConnection();
+             PreparedStatement ps = cn.prepareStatement(sql)) {
+
+            ps.setString(1, stationName);
+
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    StationMeteo st = new StationMeteo();
+
+                    st.setNom(rs.getString("nom"));
+
+                    double lat = rs.getDouble("latitude");
+                    if (!rs.wasNull()) {
+                        st.setLatitude(lat);
+                    }
+
+                    double lon = rs.getDouble("longitude");
+                    if (!rs.wasNull()) {
+                        st.setLongitude(lon);
+                    }
+
+                    int owid = rs.getInt("openweather_id");
+                    if (!rs.wasNull()) {
+                        st.setOpenWeatherMapId(owid);
+                    }
+
+                    Pays p = new Pays();
+                    p.setNom(rs.getString("pays_nom"));
+                    p.setCode(rs.getString("pays_code"));
+                    st.setPays(p);
+
+                    return st;
+                }
+            }
+        }
+
+        return null;
+    }
 }
