@@ -1,4 +1,4 @@
-# Projet Météo – OpenWeatherMap + Oracle (Java / Maven)
+# Projet Météo – OpenWeatherMap GSON & OJDBC
 
 Application console Java qui :
 
